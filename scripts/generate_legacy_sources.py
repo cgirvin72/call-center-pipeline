@@ -78,6 +78,25 @@ for i in range(1, NUM_AGENTS + 1):
 # (simulates agents who transferred teams and the export wasn't refreshed)
 ORPHANED_AGENT_NUMS = set(random.sample([a["agent_num"] for a in agents], 4))
 
+# --- Per-agent performance tendency ---
+# Drawn from an INDEPENDENT random stream (its own seed, its own state) so it
+# consumes zero draws from the shared `random` module used everywhere else in
+# this script. That keeps every already-published pipeline validation number
+# (total rows, dedup counts, orphaned-agent selection, correction sample)
+# byte-for-byte identical after adding this. Only the actual resolution and
+# handle-time values become agent-dependent instead of drawn from one flat
+# population-wide constant.
+skill_rng = random.Random(1042)
+for agent in agents:
+    # Persistent per-agent resolution tendency. Centered near the original
+    # flat 93% rate, but with real spread so some agents are genuinely
+    # stronger or weaker at first-call resolution, not just sampling noise.
+    agent["resolution_skill"] = min(0.99, max(0.55, skill_rng.gauss(0.93, 0.07)))
+    # Persistent per-agent handle-time pace. 1.0 = average, above 1.0 =
+    # slower, below 1.0 = faster. Centered at 1.0 so the population-wide
+    # average handle time is unchanged, only the spread across agents is real.
+    agent["speed_skill"] = max(0.55, skill_rng.gauss(1.0, 0.22))
+
 def format_agent_id(agent_num, style):
     """Simulate inconsistent agent ID formatting across legacy sources."""
     if style == "bare":
@@ -115,7 +134,7 @@ for day_offset in range(NUM_DAYS):
             minute = random.randint(0, 59)
             second = random.randint(0, 59)
             call_start = call_date.replace(hour=hour, minute=minute, second=second)
-            handle_seconds = max(45, int(random.gauss(310, 140)))  # AHT ~5min, noisy
+            handle_seconds = max(45, int(random.gauss(310 * agent["speed_skill"], 140)))  # AHT ~5min, noisy, now paced by agent
 
             all_calls.append({
                 "call_id": f"CL{call_seq:07d}",
@@ -125,7 +144,7 @@ for day_offset in range(NUM_DAYS):
                 "call_start_ts": call_start.isoformat(sep=" "),
                 "handle_time_sec": handle_seconds,
                 "call_reason": random.choice(CALL_REASONS),
-                "resolved_flag": 1 if random.random() > 0.07 else 0,
+                "resolved_flag": 1 if random.random() < agent["resolution_skill"] else 0,
             })
             call_seq += 1
 
