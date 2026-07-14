@@ -108,6 +108,16 @@ A separate validation step also confirmed that **agents missing from the org-cha
 
 ---
 
+## Modeling Realistic Agent Variation
+
+An earlier version of this dataset drew every call's resolution outcome and handle time from a single population-wide distribution, independent of which agent handled it. That is a reasonable first pass, but it has a quiet flaw: once averaged across roughly 280 calls per agent over the two-week window, the law of large numbers erases almost all of the spread. Every agent's resolution rate landed within about a point and a half of the same 93 percent mean, and every agent's average handle time landed within about eight seconds of the same value. A dashboard built to find a coaching opportunity or an efficiency outlier has nothing real to surface against noise that tight.
+
+The fix: each agent now carries a persistent `resolution_skill` and `speed_skill`, drawn once at roster-generation time from an independent random stream (`random.Random(1042)`, separate from the shared `random.seed(42)` stream used everywhere else in the generator). Individual calls are still random around that agent's own tendency, so no single call is deterministic, but the agent's underlying tendency now persists across their full call volume instead of resetting with every call.
+
+Because the skill values are drawn from a fully separate random stream, they consume zero draws from the shared sequence that produces the source overlaps, the QA correction sample, and the orphaned-agent selection. Every dedup and validation count documented above, 58,160 unioned rows, 29,296 deduplicated, 4 of 103 agents unmapped, is unaffected. Only the resolution and handle-time values changed: resolution rate spread grew from roughly a point and a half to about six points across agents, and handle-time spread grew by roughly a factor of ten, which is what makes the agent-level Tableau views actually worth building.
+
+---
+
 ## The Outcome
 
 | | Before | After |
