@@ -9,6 +9,7 @@ A Python + SQL Server data pipeline rebuilding the architecture I designed at Av
 - **Problem:** Daily manager reporting took ~2.5 hours of manual Excel reconciliation across 20+ overlapping, inconsistently-formatted legacy database exports.
 - **Solution:** A Python extraction/standardization layer feeding a SQL Server backend, where window functions handle deduplication and point-in-time ranking/aggregation. Tableau connects directly to the clean output as the sole reporting/dashboard layer.
 - **Outcome:** Reporting lag cut from 2.5 hours to under 10 minutes.
+- **Stakeholder Communication:** Data-quality findings documented in a QA validation log and translated into a stakeholder deck, not left as a bug report only engineers would read.
 
 ## Data Disclosure
 
@@ -23,7 +24,9 @@ Per-agent performance, resolution rate and average handle time, is generated fro
 ```
 project3/
 ├── docs/
-│   └── METHODOLOGY.md          # Full write-up: problem, architecture, technique, outcome
+│   ├── METHODOLOGY.md          # Full write-up: problem, architecture, technique, outcome, stakeholder communication
+│   ├── qa-validation.md        # QA log: issue, root cause, data impact, resolution
+│   └── Call_Center_Operations_Review.pdf   # Findings translated for a non-technical audience
 ├── scripts/
 │   ├── generate_legacy_sources.py   # Builds 6 synthetic "legacy export" CSVs
 │   └── etl_pipeline.py              # Python extraction + standardization layer
@@ -40,7 +43,7 @@ project3/
 
 ## Running It
 
-```bash
+```
 # 1. Generate synthetic legacy source data
 python scripts/generate_legacy_sources.py
 
@@ -53,4 +56,4 @@ python scripts/etl_pipeline.py
 
 ## Tech Stack
 
-Python (csv, no external dependencies by design — easy to audit) · SQL Server (T-SQL window functions) · Tableau (consumption layer, not built in this repo — see methodology note)
+Python (csv, no external dependencies by design, easy to audit) · SQL Server (T-SQL window functions) · Tableau (consumption layer, not built in this repo, see methodology note)
