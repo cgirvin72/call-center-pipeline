@@ -1,4 +1,5 @@
 # Call Center Reporting Consolidation
+
 ### Methodology Note — Python ETL + SQL Server Window Functions + Tableau
 
 ---
@@ -106,6 +107,8 @@ The SQL Server window-function logic (`02_dedup_and_aggregation.sql`) was indepe
 
 A separate validation step also confirmed that **agents missing from the org-chart reference table are never silently dropped.** In the synthetic dataset, 4 of 103 agents had no current manager assignment (simulating a stale HR export after a team transfer). Rather than excluding their call volume from totals — which would quietly understate team performance without anyone noticing — those records are flagged `UNMAPPED_ORG_CHART_GAP` and surfaced as their own data-quality line item. This was a real lesson from the original system: a silent `INNER JOIN` against an incomplete reference table is a bug that doesn't announce itself until someone notices the numbers don't add up.
 
+The full validation narrative behind this finding, including how it first surfaced through a reporting-layer calculated field and the daily call volume it would have affected if left unresolved, is documented in [`docs/qa-validation.md`](qa-validation.md).
+
 ---
 
 ## Modeling Realistic Agent Variation
@@ -120,26 +123,41 @@ Because the skill values are drawn from a fully separate random stream, they con
 
 ## The Outcome
 
-| | Before | After |
-|---|---|---|
-| Time to produce daily manager report | ~2.5 hours, manual | Under 10 minutes, scheduled |
-| Reconciliation method | Manual visual comparison in Excel | Deterministic SQL window-function logic |
-| Agent ID handling | Inconsistent across sources, manually corrected | Normalized at ingestion, single canonical ID |
-| Missing org-chart records | Silently dropped from totals | Flagged and surfaced as a data-quality metric |
-| Dashboard refresh | Rebuilt from scratch each morning | Tableau auto-refreshes against live SQL Server views |
+|                                      | Before                                          | After                                                |
+| ------------------------------------ | ------------------------------------------------ | ----------------------------------------------------- |
+| Time to produce daily manager report | ~2.5 hours, manual                              | Under 10 minutes, scheduled                          |
+| Reconciliation method                | Manual visual comparison in Excel               | Deterministic SQL window-function logic              |
+| Agent ID handling                    | Inconsistent across sources, manually corrected | Normalized at ingestion, single canonical ID         |
+| Missing org-chart records            | Silently dropped from totals                    | Flagged and surfaced as a data-quality metric        |
+| Dashboard refresh                    | Rebuilt from scratch each morning               | Tableau auto-refreshes against live SQL Server views |
 
 The original system served daily metrics — calls handled, average handle time, resolution rate — for roughly 100 agents under 4 managers and 1 senior manager, every morning, without manual reconciliation.
 
 ---
 
+## Stakeholder Communication
+
+Passing validation is not the same as being trusted. Finding a discrepancy in a SQL query and explaining what that discrepancy means to someone who owns the business outcome are two different skills, and this project documents both.
+
+`docs/qa-validation.md` is the QA validation log. It documents the org-chart-gap finding referenced above in full: the root cause, what it would have meant downstream if left unresolved, and how it was fixed. It reads the way an analyst hands a finding to an engineering team, not the way a bug tracker auto-generates a ticket.
+
+`docs/stakeholder-deck/Call_Center_Operations_Review.pdf` carries the same findings to a non-technical audience. It reframes a data-quality issue as a business risk and a recommendation, since a manager does not need to see a `ROW_NUMBER()` window function to understand what a gap in the data would have cost them if it had reached a dashboard unnoticed.
+
+Together, the two documents close the loop this repository is built to demonstrate: a pipeline that produces correct data, a process that catches when it does not, and the ability to communicate that finding to the person who has to act on it.
+
+---
+
 ## Repository Contents
 
-| File | Purpose |
-|---|---|
-| `scripts/generate_legacy_sources.py` | Generates the 6 synthetic "legacy export" CSVs used as input |
-| `scripts/etl_pipeline.py` | Python extraction + standardization + Python-side dedup validation |
-| `sql/01_schema.sql` | SQL Server table definitions (staging, dimensions, clean fact table) |
-| `sql/02_dedup_and_aggregation.sql` | Window-function deduplication + ranking/aggregation queries |
-| `sql/03_views_for_tableau.sql` | Views exposed to the Tableau consumption layer |
-| `source_data/` | Synthetic "legacy" CSV exports (generated, not real) |
-| `source_data/clean/` | Output of the Python ETL run — clean, deduplicated, enriched data |
+| File                                                        | Purpose                                                                    |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `scripts/generate_legacy_sources.py`                        | Generates the 6 synthetic "legacy export" CSVs used as input               |
+| `scripts/etl_pipeline.py`                                   | Python extraction + standardization + Python-side dedup validation         |
+| `sql/01_schema.sql`                                          | SQL Server table definitions (staging, dimensions, clean fact table)       |
+| `sql/02_dedup_and_aggregation.sql`                           | Window-function deduplication + ranking/aggregation queries                |
+| `sql/03_views_for_tableau.sql`                               | Views exposed to the Tableau consumption layer                             |
+| `source_data/`                                               | Synthetic "legacy" CSV exports (generated, not real)                       |
+| `source_data/clean/`                                         | Output of the Python ETL run — clean, deduplicated, enriched data          |
+| `docs/qa-validation.md`                                      | QA validation log: issue, root cause, data impact, resolution              |
+| `docs/stakeholder-deck/Call_Center_Operations_Review.pdf`    | Stakeholder-facing deck presenting the same findings as a recommendation   |
+
