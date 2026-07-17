@@ -141,7 +141,7 @@ Passing validation is not the same as being trusted. Finding a discrepancy in a 
 
 `docs/qa-validation.md` is the QA validation log. It documents the org-chart-gap finding referenced above in full: the root cause, what it would have meant downstream if left unresolved, and how it was fixed. It reads the way an analyst hands a finding to an engineering team, not the way a bug tracker auto-generates a ticket.
 
-`docs/stakeholder-deck/Call_Center_Operations_Review.pdf` carries the same findings to a non-technical audience. It reframes a data-quality issue as a business risk and a recommendation, since a manager does not need to see a `ROW_NUMBER()` window function to understand what a gap in the data would have cost them if it had reached a dashboard unnoticed.
+`docs/Call_Center_Operations_Review.pdf` carries the same findings to a non-technical audience. It reframes a data-quality issue as a business risk and a recommendation, since a manager does not need to see a `ROW_NUMBER()` window function to understand what a gap in the data would have cost them if it had reached a dashboard unnoticed.
 
 Together, the two documents close the loop this repository is built to demonstrate: a pipeline that produces correct data, a process that catches when it does not, and the ability to communicate that finding to the person who has to act on it.
 
@@ -159,5 +159,5 @@ Together, the two documents close the loop this repository is built to demonstra
 | `source_data/`                                               | Synthetic "legacy" CSV exports (generated, not real)                       |
 | `source_data/clean/`                                         | Output of the Python ETL run — clean, deduplicated, enriched data          |
 | `docs/qa-validation.md`                                      | QA validation log: issue, root cause, data impact, resolution              |
-| `docs/stakeholder-deck/Call_Center_Operations_Review.pdf`    | Stakeholder-facing deck presenting the same findings as a recommendation   |
+| `docs/Call_Center_Operations_Review.pdf`                     | Stakeholder-facing deck presenting the same findings as a recommendation   |
 
