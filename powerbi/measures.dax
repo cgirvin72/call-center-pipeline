@@ -1,0 +1,274 @@
+// =========================================================================
+// measures.dax
+//
+// Power BI semantic layer for the Call Center Reporting Consolidation.
+//
+// Every measure here is written to reproduce a specific calculation that
+// already exists in SQL. The point is not to add a second BI tool. It is
+// to implement the same definitions independently and prove they agree,
+// the same way the Python ETL dedup was validated against the SQL Server
+// window-function dedup before either was trusted.
+//
+// Each measure names the SQL object and column it reconciles against.
+// If a measure has no SQL counterpart, that is stated explicitly.
+//
+// AUTHORITATIVE SOURCE for handle time is the FLOAT cast used in
+// 03_views_for_tableau.sql. See docs/reconciliation-findings.md for why
+// this matters and what it means for 02_dedup_and_aggregation.sql.
+// =========================================================================
+
+
+// -------------------------------------------------------------------------
+// BASE MEASURES
+// -------------------------------------------------------------------------
+
+// Reconciles to: vw_daily_agent_scorecard.calls_handled  -- COUNT(*)
+// Also to:       vw_manager_daily_rollup.team_calls_handled
+// Grain-independent: valid at agent/day, manager/day, or any rollup.
+Calls Handled =
+COUNTROWS ( fact_call_clean )
+
+
+// Reconciles to: vw_daily_agent_scorecard.avg_handle_time_sec
+//                AVG(CAST(fc.duration_sec AS FLOAT))
+// NOT to 02_dedup_and_aggregation.sql B1/B3, which use AVG on the raw INT
+// column and therefore truncate. DAX AVERAGE returns a decimal and will
+// match the view, not the ad-hoc query.
+Avg Handle Time (sec) =
+AVERAGE ( fact_call_clean[duration_sec] )
+
+
+// Reconciles to: vw_daily_agent_scorecard.resolution_rate
+//   SUM(CASE WHEN resolved_flag = 1 THEN 1 ELSE 0 END) * 1.0 / COUNT(*)
+// Denominator is ALL calls in context, not just resolved ones.
+// NOTE: resolved_flag is BIT in SQL Server and imports to Power BI as a
+// boolean. If your import types it as a whole number instead, change
+// TRUE() to 1.
+Resolution Rate =
+DIVIDE (
+    CALCULATE (
+        COUNTROWS ( fact_call_clean ),
+        fact_call_clean[resolved_flag] = TRUE ()
+    ),
+    COUNTROWS ( fact_call_clean )
+)
+
+
+// Reconciles to: vw_manager_daily_rollup.active_agents
+//                COUNT(DISTINCT fc.agent_num)
+Active Agents =
+DISTINCTCOUNT ( fact_call_clean[agent_num] )
+
+
+// -------------------------------------------------------------------------
+// RANKING MEASURES
+//
+// SQL RANK() assigns tied values the same rank and skips the next values
+// (1, 1, 3). DAX RANKX defaults to Skip, which matches. Do not change it
+// to Dense, or the two layers will diverge on ties.
+//
+// The ISBLANK guard reproduces SQL's behavior of only ranking rows that
+// exist in the GROUP BY output. Without it, agents with no calls on a
+// given day would be ranked last instead of omitted.
+// -------------------------------------------------------------------------
+
+// Reconciles to: vw_daily_agent_scorecard.rank_within_team_by_volume
+//   RANK() OVER (PARTITION BY call_date, manager_id ORDER BY COUNT(*) DESC)
+// ALLEXCEPT keeps the manager filter and clears the agent filter, which is
+// the DAX equivalent of PARTITION BY manager_id. Date context is left
+// untouched, which supplies the PARTITION BY call_date half.
+Rank Within Team by Volume =
+IF (
+    NOT ISBLANK ( [Calls Handled] ),
+    RANKX (
+        CALCULATETABLE (
+            VALUES ( dim_agent[agent_num] ),
+            ALLEXCEPT ( dim_agent, dim_agent[manager_id] )
+        ),
+        [Calls Handled],
+        ,
+        DESC,
+        SKIP
+    )
+)
+
+
+// Reconciles to: 02_dedup_and_aggregation.sql B1.rank_within_team_by_speed
+//   RANK() OVER (PARTITION BY call_date, manager_id ORDER BY AVG(duration_sec) ASC)
+// Lower handle time ranks better, hence ASC.
+// CAUTION: B1 ranks on the truncated INT average. This measure ranks on the
+// true decimal average, so ties can break differently. See
+// docs/reconciliation-findings.md, finding 1.
+Rank Within Team by Speed =
+IF (
+    NOT ISBLANK ( [Calls Handled] ),
+    RANKX (
+        CALCULATETABLE (
+            VALUES ( dim_agent[agent_num] ),
+            ALLEXCEPT ( dim_agent, dim_agent[manager_id] )
+        ),
+        [Avg Handle Time (sec)],
+        ,
+        ASC,
+        SKIP
+    )
+)
+
+
+// Reconciles to: 02_dedup_and_aggregation.sql B3.team_rank_by_volume
+//   RANK() OVER (PARTITION BY call_date ORDER BY COUNT(*) DESC)
+// This is the number the senior manager reads each morning.
+Team Rank by Volume =
+IF (
+    NOT ISBLANK ( [Calls Handled] ),
+    RANKX (
+        ALL ( dim_manager[manager_id] ),
+        [Calls Handled],
+        ,
+        DESC,
+        SKIP
+    )
+)
+
+
+// -------------------------------------------------------------------------
+// ROLLING WINDOW
+//
+// Read docs/reconciliation-findings.md finding 2 before using either of
+// these. The SQL and the calendar-correct version deliberately disagree,
+// and the disagreement is the finding.
+// -------------------------------------------------------------------------
+
+// CALENDAR-BASED. Averages the daily average handle time across the trailing
+// seven CALENDAR days, skipping days the agent took no calls rather than
+// reaching further back in time to find seven days that had calls.
+//
+// This is what a manager means by "seven day rolling average." It has NO
+// exact SQL counterpart today. Adopt it as authoritative and correct the
+// SQL, or keep both and document the difference.
+//
+// Requires dim_date to be marked as the model date table.
+Rolling 7-Day Avg Handle Time =
+VAR LastDateInContext = MAX ( dim_date[date_key] )
+VAR Window =
+    DATESINPERIOD ( dim_date[date_key], LastDateInContext, -7, DAY )
+VAR DailyAverages =
+    ADDCOLUMNS (
+        Window,
+        "@DailyAvg", CALCULATE ( AVERAGE ( fact_call_clean[duration_sec] ) )
+    )
+VAR DaysWithCalls =
+    FILTER ( DailyAverages, NOT ISBLANK ( [@DailyAvg] ) )
+RETURN
+    AVERAGEX ( DaysWithCalls, [@DailyAvg] )
+
+
+// ROW-BASED. Reproduces 02_dedup_and_aggregation.sql B2 exactly, including
+// its behavior of reaching backward past empty days:
+//   AVG(daily_avg) OVER (PARTITION BY agent_num ORDER BY call_date
+//                        ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)
+//
+// Keep this measure only as the reconciliation control. Do not put it on a
+// dashboard. Its purpose is to demonstrate that the two layers agree when
+// they implement the same rule, which isolates the calendar-vs-row question
+// as a definition problem rather than an implementation bug.
+//
+// UNVERIFIED: this one is the most intricate measure here and has not been
+// executed against the model. Test it before trusting the reconciliation.
+Rolling 7-Row Avg Handle Time (SQL B2 control) =
+VAR CurrentAgent = SELECTEDVALUE ( fact_call_clean[agent_num] )
+VAR CurrentDate = MAX ( dim_date[date_key] )
+VAR AgentDaysWithActivity =
+    CALCULATETABLE (
+        VALUES ( fact_call_clean[call_date] ),
+        REMOVEFILTERS ( dim_date ),
+        fact_call_clean[call_date] <= CurrentDate,
+        fact_call_clean[agent_num] = CurrentAgent
+    )
+VAR LastSevenActiveDays =
+    TOPN ( 7, AgentDaysWithActivity, fact_call_clean[call_date], DESC )
+VAR DailyAverages =
+    ADDCOLUMNS (
+        LastSevenActiveDays,
+        "@DailyAvg",
+        CALCULATE (
+            AVERAGE ( fact_call_clean[duration_sec] ),
+            REMOVEFILTERS ( dim_date ),
+            fact_call_clean[agent_num] = CurrentAgent
+        )
+    )
+RETURN
+    IF (
+        NOT ISBLANK ( CurrentAgent ),
+        AVERAGEX ( DailyAverages, [@DailyAvg] )
+    )
+
+
+// -------------------------------------------------------------------------
+// DATA QUALITY
+//
+// These exist because the original system's real lesson was that a silent
+// INNER JOIN against an incomplete reference table understates totals
+// without announcing itself. Unmapped volume gets its own measures so it
+// is visible on the dashboard, not inferred from a gap.
+// -------------------------------------------------------------------------
+
+// Reconciles to: vw_data_quality_unmapped.unmapped_call_count
+Unmapped Call Count =
+CALCULATE (
+    COUNTROWS ( fact_call_clean ),
+    dim_agent[manager_assignment_status] = "UNMAPPED_ORG_CHART_GAP"
+)
+
+
+// Reconciles to: vw_data_quality_unmapped.unmapped_agent_count
+Unmapped Agent Count =
+CALCULATE (
+    DISTINCTCOUNT ( fact_call_clean[agent_num] ),
+    dim_agent[manager_assignment_status] = "UNMAPPED_ORG_CHART_GAP"
+)
+
+
+// No SQL counterpart. Added because a raw count of unmapped calls does not
+// tell a manager whether it matters. A percentage does.
+// Denominator deliberately ignores the status filter so the ratio is against
+// total volume, not against unmapped volume.
+Unmapped Call % =
+DIVIDE (
+    [Unmapped Call Count],
+    CALCULATE (
+        COUNTROWS ( fact_call_clean ),
+        REMOVEFILTERS ( dim_agent[manager_assignment_status] )
+    )
+)
+
+
+// -------------------------------------------------------------------------
+// RECONCILIATION HELPERS
+//
+// Put these on a hidden validation page. They are how the repo proves the
+// claim rather than asserting it.
+// -------------------------------------------------------------------------
+
+// Total rows in the clean fact table. Should equal the "Final clean record
+// count" logged by etl_pipeline.py and the row count in fact_call_clean.
+// Expected against the current synthetic dataset: 28,864.
+Recon - Fact Row Count =
+COUNTROWS ( ALL ( fact_call_clean ) )
+
+
+// Distinct calls. Must equal Recon - Fact Row Count, because call_ref is the
+// primary key of fact_call_clean. If these ever differ, the dedup guarantee
+// has been broken upstream and every number in the model is suspect.
+Recon - Distinct Call Refs =
+DISTINCTCOUNT ( fact_call_clean[call_ref] )
+
+
+// Hard pass/fail for the dedup guarantee. Display this on the validation
+// page. It should read PASS at all times and under every filter.
+Recon - Dedup Integrity =
+IF (
+    [Recon - Fact Row Count] = [Recon - Distinct Call Refs],
+    "PASS",
+    "FAIL - duplicate call_ref present in fact_call_clean"
+)
