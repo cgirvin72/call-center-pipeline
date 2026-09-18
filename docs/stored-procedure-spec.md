@@ -1,6 +1,6 @@
 # Stored Procedure Spec: `callcenter.usp_load_clean_calls`
 
-One-page reference for the daily load procedure in `sql/04_load_clean_calls_proc.sql`.
+One-page reference for the daily load procedure in `sql/07_load_clean_calls_proc.sql`.
 Written to be read before the code, and to be the outline of how I'd describe the
 object in an interview.
 

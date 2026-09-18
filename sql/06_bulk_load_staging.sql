@@ -19,7 +19,7 @@
        duration_sec, reason, resolved_flag, load_ts, source_system
 
    agent_num is written empty by the ETL when the raw identifier could not
-   be resolved. Those rows still load. The procedure in 04 captures them as
+   be resolved. Those rows still load. the procedure in 07 captures them as
    AGENT_ID_NOT_NORMALIZED rather than discarding them silently, which is
    the behavior this staging design exists to make possible.
    ========================================================================= */
